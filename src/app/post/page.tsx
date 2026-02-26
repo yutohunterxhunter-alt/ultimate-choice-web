@@ -1,16 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import { PricingType } from '@/lib/types';
 import { categories } from '@/lib/mockData';
+import { createApp } from '@/lib/firestore';
+import { useAuth } from '@/contexts/AuthContext';
 
 const techOptions = ['React', 'Next.js', 'Vue.js', 'TypeScript', 'JavaScript', 'Python', 'Go', 'Rust', 'Firebase', 'Supabase', 'Tailwind CSS', 'Node.js', 'FastAPI', 'Gemini API', 'OpenAI API', 'D3.js', 'Phaser.js', 'Three.js', 'PWA', 'WebSocket'];
 
 export default function PostPage() {
+  const { user, profile } = useAuth();
+  const router = useRouter();
   const [step, setStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [submittedId, setSubmittedId] = useState('');
+  const thumbnailInputRef = useRef<HTMLInputElement>(null);
+  const screenshotsInputRef = useRef<HTMLInputElement>(null);
+
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -23,9 +34,10 @@ export default function PostPage() {
     demoUrl: '',
     sourceUrl: '',
     thumbnail: null as File | null,
+    thumbnailPreview: '',
     screenshots: [] as File[],
+    screenshotPreviews: [] as string[],
   });
-  const [submitted, setSubmitted] = useState(false);
 
   const update = (field: string, value: unknown) => setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -38,21 +50,91 @@ export default function PostPage() {
     }
   };
 
+  const handleThumbnail = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const preview = URL.createObjectURL(file);
+    setForm(prev => ({ ...prev, thumbnail: file, thumbnailPreview: preview }));
+  };
+
+  const handleScreenshots = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).slice(0, 5);
+    const previews = files.map(f => URL.createObjectURL(f));
+    setForm(prev => ({ ...prev, screenshots: files, screenshotPreviews: previews }));
+  };
+
   const canProceedStep1 = form.title.trim() && form.description.trim() && form.category;
   const canProceedStep2 = form.longDescription.trim() && form.techStack.length > 0;
   const canSubmit = canProceedStep1 && canProceedStep2 && (form.pricing !== 'paid' || (form.price && Number(form.price) > 0));
 
-  if (submitted) {
+  const handleSubmit = async () => {
+    if (!user || !profile) {
+      router.push('/login');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    try {
+      const appId = await createApp({
+        title: form.title,
+        description: form.description,
+        longDescription: form.longDescription,
+        category: form.category,
+        techStack: form.techStack,
+        tags: form.tags.split(',').map(t => t.trim()).filter(Boolean),
+        pricing: form.pricing,
+        price: form.pricing === 'paid' ? Number(form.price) : 0,
+        demoUrl: form.demoUrl,
+        sourceUrl: form.sourceUrl,
+        thumbnail: form.thumbnail,
+        screenshots: form.screenshots,
+        authorId: user.uid,
+        authorUsername: profile.username,
+        authorDisplayName: profile.displayName,
+        authorPhotoURL: profile.photoURL || '',
+      });
+      setSubmittedId(appId);
+    } catch (err) {
+      console.error(err);
+      setError('投稿に失敗しました。もう一度お試しください。');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <main className="max-w-2xl mx-auto px-4 py-20 text-center">
+          <div className="text-6xl mb-6">🔐</div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">ログインが必要です</h1>
+          <p className="text-gray-500 mb-8">アプリを投稿するにはアカウントが必要です</p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <Link href="/login" className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-full hover:bg-indigo-700 transition-colors">
+              ログイン
+            </Link>
+            <Link href="/signup" className="px-6 py-3 border border-gray-200 text-gray-700 font-semibold rounded-full hover:bg-gray-50 transition-colors">
+              新規登録
+            </Link>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  if (submittedId) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
         <main className="max-w-2xl mx-auto px-4 py-20 text-center">
           <div className="text-7xl mb-6">🎉</div>
           <h1 className="text-3xl font-bold text-gray-900 mb-4">投稿完了！</h1>
-          <p className="text-gray-500 mb-8">アプリが投稿されました。審査後に公開されます（通常1〜2営業日）。</p>
+          <p className="text-gray-500 mb-8">アプリが公開されました！</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="/" className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-full hover:bg-indigo-700 transition-colors">
-              ホームへ戻る
+            <Link href={`/app/${submittedId}`} className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-full hover:bg-indigo-700 transition-colors">
+              投稿を見る
             </Link>
             <Link href="/dashboard" className="px-6 py-3 border border-gray-200 text-gray-700 font-semibold rounded-full hover:bg-gray-50 transition-colors">
               ダッシュボードへ
@@ -68,7 +150,6 @@ export default function PostPage() {
     <div className="min-h-screen bg-gray-50">
       <Header />
       <main className="max-w-2xl mx-auto px-4 py-8">
-        {/* Page Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">アプリを投稿する</h1>
           <p className="text-gray-500">作ったアプリをコミュニティに共有しよう</p>
@@ -94,6 +175,10 @@ export default function PostPage() {
             </div>
           ))}
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">{error}</div>
+        )}
 
         {/* Step 1: Basic Info */}
         {step === 1 && (
@@ -144,11 +229,59 @@ export default function PostPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">サムネイル画像</label>
-              <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-indigo-300 transition-colors cursor-pointer">
-                <div className="text-3xl mb-2">🖼️</div>
-                <p className="text-sm text-gray-500">クリックして画像をアップロード</p>
-                <p className="text-xs text-gray-400 mt-1">PNG / JPG (推奨: 16:9, 最大 5MB)</p>
+              <input
+                ref={thumbnailInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleThumbnail}
+                className="hidden"
+              />
+              <div
+                onClick={() => thumbnailInputRef.current?.click()}
+                className="border-2 border-dashed border-gray-200 rounded-xl overflow-hidden text-center hover:border-indigo-300 transition-colors cursor-pointer"
+              >
+                {form.thumbnailPreview ? (
+                  <img src={form.thumbnailPreview} alt="thumbnail" className="w-full h-40 object-cover" />
+                ) : (
+                  <div className="p-8">
+                    <div className="text-3xl mb-2">🖼️</div>
+                    <p className="text-sm text-gray-500">クリックして画像をアップロード</p>
+                    <p className="text-xs text-gray-400 mt-1">PNG / JPG (推奨: 16:9, 最大 5MB)</p>
+                  </div>
+                )}
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">スクリーンショット（最大5枚）</label>
+              <input
+                ref={screenshotsInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleScreenshots}
+                className="hidden"
+              />
+              {form.screenshotPreviews.length > 0 ? (
+                <div className="flex gap-2 flex-wrap">
+                  {form.screenshotPreviews.map((src, i) => (
+                    <img key={i} src={src} alt="" className="w-20 h-14 object-cover rounded-lg border border-gray-200" />
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => screenshotsInputRef.current?.click()}
+                    className="w-20 h-14 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 hover:border-indigo-300 transition-colors text-xs"
+                  >
+                    変更
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => screenshotsInputRef.current?.click()}
+                  className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center hover:border-indigo-300 transition-colors cursor-pointer"
+                >
+                  <p className="text-sm text-gray-500">クリックして追加</p>
+                </div>
+              )}
             </div>
             <button
               onClick={() => setStep(2)}
@@ -172,7 +305,7 @@ export default function PostPage() {
               <textarea
                 value={form.longDescription}
                 onChange={(e) => update('longDescription', e.target.value)}
-                placeholder="## アプリについて&#10;&#10;機能の説明、使い方、技術的な詳細など..."
+                placeholder={'## アプリについて\n\n機能の説明、使い方、技術的な詳細など...'}
                 rows={10}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 transition-colors font-mono text-sm resize-none"
               />
@@ -299,19 +432,6 @@ export default function PostPage() {
               </div>
             )}
 
-            {form.pricing === 'subscription' && (
-              <div className="p-4 bg-purple-50 rounded-xl border border-purple-100">
-                <div className="text-sm text-purple-800">
-                  <div className="font-semibold mb-2">サブスクリプション収益の仕組み</div>
-                  <ul className="space-y-1 text-xs">
-                    <li>• サブスク会員のアプリ利用数に応じて収益が分配されます</li>
-                    <li>• 月間収益の70%がクリエイターに分配されます</li>
-                    <li>• 詳細はダッシュボードで確認できます</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-
             <div className="p-4 bg-gray-50 rounded-xl">
               <div className="text-sm font-semibold text-gray-700 mb-2">投稿前の確認</div>
               <ul className="space-y-1.5 text-sm text-gray-500">
@@ -335,11 +455,11 @@ export default function PostPage() {
                 ← 戻る
               </button>
               <button
-                onClick={() => setSubmitted(true)}
-                disabled={!canSubmit}
+                onClick={handleSubmit}
+                disabled={!canSubmit || submitting}
                 className="flex-1 py-3 bg-indigo-600 text-white font-semibold rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                投稿する 🚀
+                {submitting ? 'アップロード中...' : '投稿する 🚀'}
               </button>
             </div>
           </div>
